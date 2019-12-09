@@ -13,6 +13,10 @@ from odoo.exceptions import UserError, Warning
 from reportlab.graphics.barcode import createBarcodeDrawing
 from reportlab.lib.units import mm
 from . import amount_to_text_es_MX
+import pytz
+from .tzlocal import get_localzone
+from odoo import tools
+
 import logging
 _logger = logging.getLogger(__name__)
 
@@ -149,8 +153,11 @@ class AccountInvoice(models.Model):
     monto = fields.Float(string='Amount', digits=dp.get_precision('Product Price'))
     precio_unitario = fields.Float(string='Precio unitario', digits=dp.get_precision('Product Price'))
     monto_impuesto = fields.Float(string='Monto impuesto', digits=dp.get_precision('Product Price'))
+    total_impuesto = fields.Float(string='Monto impuesto', digits=dp.get_precision('Product Price'))
     decimales = fields.Float(string='decimales')
     desc = fields.Float(string='descuento', digits=dp.get_precision('Product Price'))
+    subtotal = fields.Float(string='subtotal', digits=dp.get_precision('Product Price'))
+    total = fields.Float(string='total', digits=dp.get_precision('Product Price'))
 
     @api.model
     def _prepare_refund(self, invoice, date_invoice=None, date=None, description=None, journal_id=None):
@@ -231,6 +238,19 @@ class AccountInvoice(models.Model):
             nombre = self.partner_id.name
         decimales = self.env['decimal.precision'].search([('name','=','Product Price')])
         no_decimales = decimales.digits
+
+        #corregir hora
+        timezone = self._context.get('tz')
+        if not timezone:
+            timezone = self.env.user.partner_id.tz or 'UTC'
+        #timezone = tools.ustr(timezone).encode('utf-8')
+
+        local = pytz.timezone(timezone)
+        naive_from = datetime.datetime.now() 
+        local_dt_from = naive_from.replace(tzinfo=pytz.UTC).astimezone(local)
+        date_from = local_dt_from.strftime ("%Y-%m-%d %H:%M:%S")
+
+        _logger.info('date_from %s', date_from)
         request_params = { 
                 'company': {
                       'rfc': self.company_id.rfc,
@@ -258,7 +278,7 @@ class AccountInvoice(models.Model):
                       'total': self.amount_total,
                       'folio': self.number.replace('INV','').replace('/',''),
                       'serie_factura': self.company_id.serie_factura,
-                      'fecha_factura': datetime.datetime.strftime(self.fecha_factura, '%Y-%m-%d %H:%M:%S'),
+                      'fecha_factura': date_from, #self.fecha_factura,
                       'decimales': no_decimales,
                 },
                 'adicional': {
@@ -266,15 +286,24 @@ class AccountInvoice(models.Model):
                       'uuid_relacionado': self.uuid_relacionado,
                       'confirmacion': self.confirmacion,
                 },
+                'version': {
+                      'cfdi': '3.3',
+                      'sistema': 'odoo11',
+                      'version': '6',
+                },
         }
         amount_total = 0.0
         amount_untaxed = 0.0
+        self.subtotal = 0
+        self.total = 0
+        self.discount = 0
         tax_grouped = {}
         items = {'numerodepartidas': len(self.invoice_line_ids)}
         invoice_lines = []
         for line in self.invoice_line_ids:
-            if line.quantity < 0:
+            if line.quantity <= 0:
                 continue
+            self.total_impuesto = 0.0
             price = line.price_unit * (1 - (line.discount or 0.0) / 100.0)
             amounts = line.invoice_line_tax_ids.compute_all(price, line.currency_id, line.quantity, product=line.product_id, partner=line.invoice_id.partner_id)
             price_exclude_tax = amounts['total_excluded']
@@ -292,6 +321,7 @@ class AccountInvoice(models.Model):
                 if tax_id.price_include or tax_id.amount_type == 'division':
                     amount_wo_tax -= tax['amount']
                 self.monto_impuesto = tax['amount']
+                self.total_impuesto += self.monto_impuesto
                 tax_items.append({'name': tax_id.tax_group_id.name,
                  'percentage': tax_id.amount,
                  'amount': self.monto_impuesto, #tax['amount'],
@@ -312,7 +342,8 @@ class AccountInvoice(models.Model):
             self.precio_unitario = float(amount_wo_tax) / float(line.quantity)
             self.monto = self.precio_unitario * line.quantity
             amount_untaxed += self.monto
-            #_logger.info('revisar montos ... precio unitatio %s monto %s  subtotal', self.precio_unitario, self.monto, line.price_subtotal)
+            self.subtotal += self.monto
+            self.total += self.monto + self.total_impuesto
 
             self.desc = self.monto - line.price_subtotal # p_unit * line.quantity - line.price_subtotal
             if self.desc < 0.01:
@@ -328,7 +359,7 @@ class AccountInvoice(models.Model):
             if self.tipo_comprobante == 'E':
                 invoice_lines.append({'quantity': line.quantity,
                                       'unidad_medida': line.product_id.unidad_medida,
-                                      'product': product_string, # line.product_id.code and line.product_id.code[:100] or '',
+                                      'product': product_string,
                                       'price_unit': self.precio_unitario,
                                       'amount': self.monto,
                                       'description': line.name[:1000],
@@ -339,7 +370,7 @@ class AccountInvoice(models.Model):
             elif self.tipo_comprobante == 'T':
                 invoice_lines.append({'quantity': line.quantity,
                                       'unidad_medida': line.product_id.unidad_medida,
-                                      'product': product_string, #line.product_id.code and line.product_id.code[:100] or '',
+                                      'product': product_string,
                                       'price_unit': self.precio_unitario,
                                       'amount': self.monto,
                                       'description': line.name[:1000],
@@ -348,7 +379,7 @@ class AccountInvoice(models.Model):
             else:
                 invoice_lines.append({'quantity': line.quantity,
                                       'unidad_medida': line.product_id.unidad_medida,
-                                      'product': product_string, #line.product_id.code and line.product_id.code[:100] or '',
+                                      'product': product_string,
                                       'price_unit': self.precio_unitario,
                                       'amount': self.monto,
                                       'description': line.name[:1000],
@@ -361,7 +392,7 @@ class AccountInvoice(models.Model):
         if self.tipo_comprobante == 'T':
             request_params['invoice'].update({'subtotal': '0.00','total': '0.00'})
         else:
-            request_params['invoice'].update({'subtotal': self.amount_untaxed+self.discount,'total': self.amount_total})
+            request_params['invoice'].update({'subtotal': self.subtotal,'total': self.total-self.discount})
         items.update({'invoice_lines': invoice_lines})
         request_params.update({'items': items})
         tax_lines = []
@@ -407,6 +438,10 @@ class AccountInvoice(models.Model):
                 url=''
                 if invoice.company_id.proveedor_timbrado == 'multifactura':
                     url = '%s' % ('http://facturacion.itadmin.com.mx/api/invoice')
+                elif invoice.company_id.proveedor_timbrado == 'multifactura2':
+                    url = '%s' % ('http://facturacion2.itadmin.com.mx/api/invoice')
+                elif invoice.company_id.proveedor_timbrado == 'multifactura3':
+                    url = '%s' % ('http://facturacion3.itadmin.com.mx/api/invoice')
                 elif invoice.company_id.proveedor_timbrado == 'gecoerp':
                     if self.company_id.modo_prueba:
                         #url = '%s' % ('https://ws.gecoerp.com/itadmin/pruebas/invoice/?handler=OdooHandler33')
@@ -467,6 +502,10 @@ class AccountInvoice(models.Model):
             values = invoice.to_json()
             if self.company_id.proveedor_timbrado == 'multifactura':
                 url = '%s' % ('http://facturacion.itadmin.com.mx/api/invoice')
+            elif invoice.company_id.proveedor_timbrado == 'multifactura2':
+                url = '%s' % ('http://facturacion2.itadmin.com.mx/api/invoice')
+            elif invoice.company_id.proveedor_timbrado == 'multifactura3':
+                url = '%s' % ('http://facturacion3.itadmin.com.mx/api/invoice')
             elif self.company_id.proveedor_timbrado == 'gecoerp':
                 url = '%s' % ('https://itadmin.gecoerp.com/invoice/?handler=OdooHandler33')
             try:
@@ -541,11 +580,12 @@ class AccountInvoice(models.Model):
         
         options = {'width': 275 * mm, 'height': 275 * mm}
         amount_str = str(self.amount_total).split('.')
-        qr_value = '?re=%s&rr=%s&tt=%s.%s&id=%s' % (self.company_id.rfc, 
+        qr_value = 'https://verificacfdi.facturaelectronica.sat.gob.mx/default.aspx?&id=%s&re=%s&rr=%s&tt=%s.%s&fe=%s' % (self.folio_fiscal,
+                                                 self.company_id.rfc, 
                                                  self.partner_id.rfc,
                                                  amount_str[0].zfill(10),
                                                  amount_str[1].ljust(6, '0'),
-                                                 self.folio_fiscal
+                                                 self.selo_digital_cdfi[-8:],
                                                  )
         self.qr_value = qr_value
         ret_val = createBarcodeDrawing('QR', value=qr_value, **options)
@@ -570,13 +610,21 @@ class AccountInvoice(models.Model):
                 invoice.fecha_factura= datetime.datetime.now()
                 invoice.write({'fecha_factura': invoice.fecha_factura})
             if invoice.estado_factura == 'factura_correcta':
-                raise UserError(_('Error para timbrar factura, Factura ya generada.'))
+                if invoice.folio_fiscal:
+                    invoice.write({'factura_cfdi': True})
+                    return True
+                else:
+                    raise UserError(_('Error para timbrar factura, Factura ya generada.'))
             if invoice.estado_factura == 'factura_cancelada':
                 raise UserError(_('Error para timbrar factura, Factura ya generada y cancelada.'))
             
             values = invoice.to_json()
             if invoice.company_id.proveedor_timbrado == 'multifactura':
                 url = '%s' % ('http://facturacion.itadmin.com.mx/api/invoice')
+            elif invoice.company_id.proveedor_timbrado == 'multifactura2':
+                url = '%s' % ('http://facturacion2.itadmin.com.mx/api/invoice')
+            elif invoice.company_id.proveedor_timbrado == 'multifactura3':
+                url = '%s' % ('http://facturacion3.itadmin.com.mx/api/invoice')
             elif invoice.company_id.proveedor_timbrado == 'gecoerp':
                 if self.company_id.modo_prueba:
                     #url = '%s' % ('https://ws.gecoerp.com/itadmin/pruebas/invoice/?handler=OdooHandler33')
@@ -628,6 +676,9 @@ class AccountInvoice(models.Model):
                     raise UserError(_('Falta la ruta del archivo .key'))
                 archivo_cer = self.company_id.archivo_cer
                 archivo_key = self.company_id.archivo_key
+                archivo_xml_link = invoice.company_id.factura_dir + '/' + invoice.move_name.replace('/', '_') + '.xml'
+                with open(archivo_xml_link, 'rb') as cf:
+                     archivo_xml = base64.b64encode(cf.read())
                 values = {
                           'rfc': invoice.company_id.rfc,
                           'api_key': invoice.company_id.proveedor_timbrado,
@@ -639,10 +690,15 @@ class AccountInvoice(models.Model):
                                   'archivo_cer': archivo_cer.decode("utf-8"),
                                   'archivo_key': archivo_key.decode("utf-8"),
                                   'contrasena': invoice.company_id.contrasena,
-                            }
+                            },
+                          'xml': archivo_xml.decode("utf-8"),
                           }
                 if self.company_id.proveedor_timbrado == 'multifactura':
                     url = '%s' % ('http://facturacion.itadmin.com.mx/api/refund')
+                elif invoice.company_id.proveedor_timbrado == 'multifactura2':
+                    url = '%s' % ('http://facturacion2.itadmin.com.mx/api/refund')
+                elif invoice.company_id.proveedor_timbrado == 'multifactura3':
+                    url = '%s' % ('http://facturacion3.itadmin.com.mx/api/refund')
                 elif self.company_id.proveedor_timbrado == 'gecoerp':
                     if self.company_id.modo_prueba:
                         #url = '%s' % ('https://ws.gecoerp.com/itadmin/pruebas/refund/?handler=OdooHandler33')
@@ -718,17 +774,16 @@ class AccountInvoice(models.Model):
                  'modo_prueba': invoice.company_id.modo_prueba,
                  'uuid': invoice.folio_fiscal,
                  }
-#            url=''
-            #_logger.info('esta logeando ...')
-#            if invoice.company_id.proveedor_timbrado == 'multifactura':
-            url = '%s' % ('http://facturacion.itadmin.com.mx/api/consulta-cacelar')
-#            elif invoice.company_id.proveedor_timbrado == 'gecoerp':
-#               if invoice.company_id.modo_prueba:
-#                  url = '%s' % ('https://itadmin.gecoerp.com/invoice/?handler=OdooHandler33')
-#               else:
-#                  url = '%s' % ('https://itadmin.gecoerp.com/invoice/?handler=OdooHandler33')
-#            if not url:
-#               return
+
+            if invoice.company_id.proveedor_timbrado == 'multifactura':
+                url = '%s' % ('http://facturacion.itadmin.com.mx/api/consulta-cacelar')
+            elif invoice.company_id.proveedor_timbrado == 'multifactura2':
+                url = '%s' % ('http://facturacion2.itadmin.com.mx/api/consulta-cacelar')
+            elif invoice.company_id.proveedor_timbrado == 'multifactura3':
+                url = '%s' % ('http://facturacion3.itadmin.com.mx/api/consulta-cacelar')
+            elif invoice.company_id.proveedor_timbrado == 'gecoerp':
+                url = '%s' % ('http://facturacion.itadmin.com.mx/api/consulta-cacelar')
+
             try:
                response = requests.post(url, 
                                          auth=None,verify=False, data=json.dumps(values), 
@@ -800,7 +855,7 @@ class MailTemplate(models.Model):
                     else:
                         if invoice.number:
                             cancel_file_link = invoice.company_id.factura_dir + '/CANCEL_' + invoice.number.replace('/', '_') + '.xml'
-                        else:							
+                        else:
                             cancel_file_link = invoice.company_id.factura_dir + '/CANCEL_' + invoice.move_name.replace('/', '_') + '.xml'
                         with open(cancel_file_link, 'rb') as cf:
                             cancel_xml_file = cf.read()
@@ -808,7 +863,7 @@ class MailTemplate(models.Model):
                             if invoice.number:
                                 attachments.append(('CDFI_CANCEL_' + invoice.number.replace('/', '_') + '.xml', base64.b64encode(cancel_xml_file)))
                             else:
-                                attachments.append(('CDFI_CANCEL_' + invoice.move_name.replace('/', '_') + '.xml', base64.b64encode(cancel_xml_file)))								
+                                attachments.append(('CDFI_CANCEL_' + invoice.move_name.replace('/', '_') + '.xml', base64.b64encode(cancel_xml_file)))
                     results[res_id]['attachments'] = attachments
         return results
 
