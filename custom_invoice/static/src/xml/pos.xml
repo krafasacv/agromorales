@@ -288,8 +288,23 @@
     <t t-name="PosTicketCFDIWithoutInvoice">
         <div class="pos-sale-ticket">
             <div class="pos-center-align">
-	           	<img src='/web/binary/company_logo' style="width:100%"/>
-	        </div>
+		   <!-- Las siguientes lineas se agregaron para que imprimiera el logotipo de la empresa
+			-->
+		    <t t-if='receipt.company.logo'>
+                		<img t-att-src='receipt.company.logo' alt="Logo"/>
+                		<br/>
+            		 </t>
+            		<t t-if='!receipt.company.logo'>
+                		<h1>
+					<t t-esc='receipt.company.name' />
+				</h1>
+                		<br/>
+            		</t>
+	           	<!--	esta linea se remplazo porque no imprime el logotipo, se agregaron las lineas de arriba
+		    <img src='/web/binary/company_logo' style="width:100%"/>
+			-->
+	
+	    </div>
 	        <br />
 		<!-- La siguiente linea se cometa para colocar esta información al pie del ticket 
 	
