@@ -324,6 +324,7 @@
                <strong>-------------------------------------</strong>
             </div>
             <br />
+	<div class='client-name'><t t-esc='partner.name' /></div>
             <t t-if="receipt.header">
                 <div style='text-align:center'>
                     <t t-esc="receipt.header" />
