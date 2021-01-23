@@ -1,0 +1,113 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+
+<templates id="template" xml:space="preserve">
+
+
+   <t t-extend="NumpadWidget">
+       <t t-jquery=".numpad" t-operation="replace">
+           <div class="numpad">
+            <button class="input-button number-char">1</button>
+            <button class="input-button number-char">2</button>
+            <button class="input-button number-char">3</button>
+            <button class="mode-button" data-mode='quantity'>Qty</button>
+            <br />
+            <button class="input-button number-char">4</button>
+            <button class="input-button number-char">5</button>
+            <button class="input-button number-char">6</button>
+            <button class="mode-button" data-mode='quantity'>Qty</button>
+            <br />
+            <button class="input-button number-char">7</button>
+            <button class="input-button number-char">8</button>
+            <button class="input-button number-char">9</button>
+            <button class="mode-button" data-mode='quantity'>Qty</button>
+            <br />
+            <br/>
+            <button class="input-button number-char">0</button>
+            <button class="input-button number-char">.</button>
+            <button class="input-button numpad-backspace">
+                <img style="pointer-events: none;" src="/point_of_sale/static/src/img/backspace.png" width="24" height="21" alt="Backspace"/>
+            </button>
+           </div>
+       </t>
+</t>
+
+<t t-extend="PosTicket">
+	<t t-jquery=".pos-sale-ticket .pos-center-align" t-operation="before">	
+             <t t-if='receipt.company.logo'>
+                <img class="pos-receipt-logo" t-att-src='receipt.company.logo' alt="Logo"/>
+                <br/>
+            </t>
+	</t>
+
+    <t t-jquery=".pos-sale-ticket .pos-center-align" t-operation="replace">	
+            <div class="pos-center-align">
+                <t t-esc="order.name"/>
+                <br/>
+                <t t-esc="order.formatted_validation_date"/>
+            </div>
+	</t>
+
+
+	<t t-jquery=".pos-sale-ticket .receipt-orderlines" t-operation="replace">
+		<table class='receipt-orderlines'>
+
+                <colgroup>
+                    <col width='20%' />
+                    <col width='20%' />
+                    <col width='25%' />
+                    <col width='5%' />
+                    <col width='30%' />
+
+                </colgroup>
+        	        <tr t-foreach="orderlines" t-as="orderline">
+				<tr>
+	        			<td colspan="5">
+        	                		<t t-esc="orderline.get_product().display_name"/>
+					</td>
+				</tr>
+				<tr>
+
+	  				<td >	
+						<t t-if="orderline.get_unit().id == 4">
+							<t t-esc="orderline.get_quantity()/1000"/>
+						</t>
+						<t t-if="orderline.get_unit().id != 4">
+							<t t-esc="orderline.get_quantity() + '.000'"/>
+						</t>
+					</td>
+					<td>
+						<t t-if="orderline.get_unit().id == 4">
+							Kg. a
+						</t>
+
+						<t t-if="orderline.get_unit().id != 4">
+							Pz. a
+						</t>
+	        		                 <t t-if="orderline.get_discount() > 0">
+        	                		    <div class="pos-disc-font">
+		                	                With a <t t-esc="orderline.get_discount()"/>% discount
+                		        	    </div>
+	                        		</t>
+	 				</td>
+					<td class="pos-right-align">
+						<t t-if="orderline.get_unit().id == 4">
+							<t t-esc="widget.format_currency(orderline.get_unit_display_price()*1000)"/>	
+						</t>
+						<t t-if="orderline.get_unit().id != 4">
+							<t t-esc="widget.format_currency(orderline.get_unit_display_price())"/>	
+						</t>
+ 					</td>
+					<td class="pos-right-align">
+						=
+					</td>
+					<td class="pos-right-align">
+						<t t-esc="widget.format_currency(orderline.get_display_price())"/>
+					</td>
+				</tr>
+        	        </tr>
+		</table>
+	
+       </t>
+</t>
+
+</templates>
