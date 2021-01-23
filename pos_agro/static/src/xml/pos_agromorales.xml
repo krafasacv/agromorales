@@ -69,7 +69,7 @@
 
 	  				<td >	
 						<t t-if="orderline.get_unit().id == 4">
-							<t t-esc="orderline.get_quantity()/1000"/>
+							<t t-esc="(orderline.get_quantity()/1000).toFixed(3)"/>
 						</t>
 						<t t-if="orderline.get_unit().id != 4">
 							<t t-esc="orderline.get_quantity() + '.000'"/>
