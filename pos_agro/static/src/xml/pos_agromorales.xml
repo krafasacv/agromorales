@@ -91,7 +91,7 @@
 	 				</td>
 					<td class="pos-right-align">
 						<t t-if="orderline.get_unit().id == 4">
-							<t t-esc="widget.format_currency(orderline.get_unit_display_price()*1000)"/>	
+							<t t-esc="(orderline.get_display_price()/orderline.get_quantity()).toFixed(3)"/>		
 						</t>
 						<t t-if="orderline.get_unit().id != 4">
 							<t t-esc="widget.format_currency(orderline.get_unit_display_price())"/>	
